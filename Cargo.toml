@@ -15,7 +15,5 @@ categories = ["rust-patterns", "value-formatting"]
 [features]
 
 [dependencies]
-chrono = { version = "0.4.31", features = ["serde"] }
-chrono-tz = { version = "0.8", features = ["serde"] }
 
 [dev-dependencies]

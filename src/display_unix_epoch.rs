@@ -14,10 +14,6 @@
 
 use std::fmt;
 use std::time::Duration;
-use std::time::UNIX_EPOCH;
-
-use chrono::DateTime;
-use chrono::Utc;
 
 pub struct DisplayUnixTimeStamp {
     /// The duration since the UNIX epoch.
@@ -35,23 +31,54 @@ impl fmt::Display for DisplayUnixTimeStamp {
             None => return write!(f, "None"),
         };
 
-        let system_time = UNIX_EPOCH + duration;
-        let datetime: DateTime<Utc> = system_time.into();
+        let secs = duration.as_secs();
+        let (year, month, day) = civil_from_days(secs / 86_400);
+        let secs_of_day = secs % 86_400;
+        let (hour, minute, second) = (
+            secs_of_day / 3600,
+            secs_of_day % 3600 / 60,
+            secs_of_day % 60,
+        );
 
-        let fmt = if self.in_millis {
-            if self.with_timezone {
-                "%Y-%m-%dT%H:%M:%S%.3fZ%z"
-            } else {
-                "%Y-%m-%dT%H:%M:%S%.3f"
-            }
-        } else if self.with_timezone {
-            "%Y-%m-%dT%H:%M:%S%.6fZ%z"
+        write!(
+            f,
+            "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
+        )?;
+
+        // The fraction is truncated, not rounded.
+        if self.in_millis {
+            write!(f, ".{:03}", duration.subsec_millis())?;
         } else {
-            "%Y-%m-%dT%H:%M:%S%.6f"
-        };
+            write!(f, ".{:06}", duration.subsec_micros())?;
+        }
 
-        write!(f, "{}", datetime.format(fmt))
+        // The time is always in UTC.
+        if self.with_timezone {
+            write!(f, "Z+0000")?;
+        }
+
+        Ok(())
     }
+}
+
+/// Convert days since 1970-01-01 to a proleptic Gregorian `(year, month, day)`.
+///
+/// Howard Hinnant's `civil_from_days`, restricted to days on or after the epoch:
+/// <https://howardhinnant.github.io/date_algorithms.html>
+fn civil_from_days(days: u64) -> (u64, u64, u64) {
+    // Shift the epoch to 0000-03-01, so that the leap day is the last day of a year.
+    let z = days + 719_468;
+    let era = z / 146_097;
+    let day_of_era = z % 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    // Month counted from March: 0 is March, 11 is February.
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = year_of_era + era * 400 + u64::from(month <= 2);
+    (year, month, day)
 }
 
 impl DisplayUnixTimeStamp {
@@ -147,6 +174,18 @@ mod tests {
         assert_eq!(
             some.display_unix_timestamp_short().to_string(),
             "2024-08-08T07:40:19.023"
+        );
+
+        // Leap days and year boundaries.
+        let leap_day = Duration::from_secs(951_782_400); // 2000-02-29T00:00:00Z
+        assert_eq!(
+            leap_day.display_unix_timestamp_short().to_string(),
+            "2000-02-29T00:00:00.000"
+        );
+        let new_year_eve = Duration::new(1_704_067_199, 999_999_999); // 2023-12-31T23:59:59Z
+        assert_eq!(
+            new_year_eve.display_unix_timestamp().to_string(),
+            "2023-12-31T23:59:59.999999Z+0000"
         );
 
         // Option<Duration>: None
